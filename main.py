@@ -2,6 +2,7 @@ import math
 import xml.etree.ElementTree as ET
 import re
 import itertools
+import argparse
 from dataclasses import dataclass
 from typing import List, Tuple, Set
 
@@ -160,20 +161,58 @@ def mock_llm_generate(prompt):
     ```
     """
 
-# Define the Task
-# Request: 3 Circles (Red, Blue, Green).
-# Constraint: ONLY Red and Blue should overlap. Green should be alone.
-task = OverlapTask(num_circles=3, overlaps_needed=[("Red", "Blue")])
+def main():
+    parser = argparse.ArgumentParser(
+        description="Benchmark SVG circle drawing and overlap detection."
+    )
+    parser.add_argument(
+        "--num-circles",
+        type=int,
+        default=3,
+        help="Number of circles to generate (default: 3)"
+    )
+    parser.add_argument(
+        "--overlaps",
+        type=str,
+        nargs="+",
+        default=["Red,Blue"],
+        help="List of circle pairs that should overlap, e.g., 'Red,Blue' 'Blue,Green' (default: 'Red,Blue')"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output"
+    )
+    
+    args = parser.parse_args()
+    
+    # Parse overlaps from command line
+    overlaps_needed = []
+    for overlap_pair in args.overlaps:
+        parts = overlap_pair.split(",")
+        if len(parts) == 2:
+            overlaps_needed.append((parts[0].strip(), parts[1].strip()))
+    
+    # Define the Task
+    task = OverlapTask(num_circles=args.num_circles, overlaps_needed=overlaps_needed)
+    
+    if args.verbose:
+        print(f"Task: {args.num_circles} circles with overlaps: {overlaps_needed}")
+    
+    # Get LLM Output
+    svg_response = mock_llm_generate(task.get_prompt())
+    
+    # Evaluate
+    evaluator = SVGEvaluator(svg_response)
+    results = evaluator.check_overlaps(task.overlaps_needed, task.circles)
+    
+    print("\n--- EVALUATION RESULTS ---")
+    print(f"1. Circle Count Accuracy: {results['metric_circle_count']}")
+    print(f"2. Correct Overlaps:      {results['metric_correct_overlaps_found']}")
+    print(f"3. Incorrect Overlaps:    {results['metric_incorrect_overlaps_made']}")
+    
+    if args.verbose:
+        print("\nDebug Details:", results['details'])
 
-# Get LLM Output
-svg_response = mock_llm_generate(task.get_prompt())
-
-# Evaluate
-evaluator = SVGEvaluator(svg_response)
-results = evaluator.check_overlaps(task.overlaps_needed, task.circles)
-
-print("\n--- EVALUATION RESULTS ---")
-print(f"1. Circle Count Accuracy: {results['metric_circle_count']}")
-print(f"2. Correct Overlaps:      {results['metric_correct_overlaps_found']}")
-print(f"3. Incorrect Overlaps:    {results['metric_incorrect_overlaps_made']}")
-print("\nDebug Details:", results['details'])
+if __name__ == "__main__":
+    main()
