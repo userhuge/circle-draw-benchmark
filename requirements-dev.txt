@@ -1,0 +1,13 @@
+# Development and testing dependencies
+pytest>=7.0.0
+coverage>=6.0
+black>=22.0
+flake8>=4.0
+mypy>=0.9
+
+# Optional: liteLLM for real LLM integration
+litellm>=0.1.0
+
+# Optional: For Jupyter notebook support
+jupyter>=1.0.0
+ipykernel>=6.0
