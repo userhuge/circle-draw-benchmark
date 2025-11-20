@@ -3,8 +3,15 @@ import xml.etree.ElementTree as ET
 import re
 import itertools
 import argparse
+import json
+import os
 from dataclasses import dataclass
-from typing import List, Tuple, Set
+from typing import List, Tuple, Set, Dict, Optional
+
+try:
+    import litellm
+except ImportError:
+    litellm = None
 
 # ==========================================
 # 1. THE BENCHMARK DEFINITION
@@ -134,16 +141,110 @@ class SVGEvaluator:
         }
 
 # ==========================================
-# 3. DEMO / USAGE
+# 3. LLM CONFIGURATION & INTEGRATION
+# ==========================================
+
+class LLMConfig:
+    """Configuration for LLM provider."""
+    
+    def __init__(self, config_dict: Optional[Dict] = None, use_mock: bool = False):
+        self.use_mock = use_mock
+        self.config = config_dict or self._get_default_config()
+        self.litellm_available = litellm is not None
+        
+    def _get_default_config(self) -> Dict:
+        """Get default configuration from environment or return mock config."""
+        # Try to load from environment variable
+        config_str = os.getenv("LLM_CONFIG")
+        if config_str:
+            try:
+                return json.loads(config_str)
+            except json.JSONDecodeError:
+                pass
+        
+        # Return default mock config
+        return {
+            "title": "Mock LLM",
+            "provider": "mock",
+            "model": "mock-model",
+        }
+    
+    def to_dict(self) -> Dict:
+        """Return config as dictionary."""
+        return self.config.copy()
+    
+    def is_mock(self) -> bool:
+        """Check if using mock LLM."""
+        return self.use_mock or self.config.get("provider") == "mock"
+
+
+def load_llm_config(config_path: Optional[str] = None) -> LLMConfig:
+    """Load LLM config from file or environment."""
+    if config_path and os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        return LLMConfig(config)
+    
+    return LLMConfig()
+
+
+def call_llm(prompt: str, config: LLMConfig, verbose: bool = False) -> str:
+    """
+    Call LLM using liteLLM or fallback to mock.
+    
+    Args:
+        prompt: The prompt to send to the LLM
+        config: LLM configuration
+        verbose: Enable verbose output
+    
+    Returns:
+        LLM response text
+    """
+    if verbose:
+        print(f"\n--- PROMPT SENT TO LLM ({config.config.get('title', 'Unknown')}) ---\n{prompt}\n--------------------------")
+    
+    if config.is_mock():
+        return mock_llm_generate(prompt)
+    
+    if not config.litellm_available:
+        print("Warning: liteLLM not available, falling back to mock LLM")
+        return mock_llm_generate(prompt)
+    
+    try:
+        model = config.config.get("model")
+        api_key = config.config.get("apiKey")
+        api_base = config.config.get("apiBase")
+        
+        # Set up liteLLM
+        if api_key:
+            os.environ.setdefault("MISTRAL_API_KEY", api_key)
+        
+        response = litellm.completion(
+            model=model,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            api_base=api_base,
+            temperature=0.7,
+            max_tokens=2000,
+        )
+        
+        return response['choices'][0]['message']['content']
+    
+    except Exception as e:
+        print(f"Warning: LLM call failed ({e}), falling back to mock LLM")
+        return mock_llm_generate(prompt)
+
+
+# ==========================================
+# 4. DEMO / USAGE
 # ==========================================
 
 def mock_llm_generate(prompt):
     """
     This simulates an LLM response. 
-    In a real scenario, replace this with openai.ChatCompletion.create(...)
+    In a real scenario, replace this with an actual LLM API call.
     """
-    print(f"\n--- PROMPT SENT TO LLM ---\n{prompt}\n--------------------------")
-    
     # SIMULATING A FLAWED RESPONSE:
     # It draws 3 circles. 
     # It successfully overlaps Red and Blue.
@@ -183,6 +284,17 @@ def main():
         action="store_true",
         help="Enable verbose output"
     )
+    parser.add_argument(
+        "--llm-config",
+        type=str,
+        default=None,
+        help="Path to LLM config JSON file (optional)"
+    )
+    parser.add_argument(
+        "--use-mock",
+        action="store_true",
+        help="Force using mock LLM instead of real provider"
+    )
     
     args = parser.parse_args()
     
@@ -193,14 +305,20 @@ def main():
         if len(parts) == 2:
             overlaps_needed.append((parts[0].strip(), parts[1].strip()))
     
+    # Load LLM configuration
+    llm_config = load_llm_config(args.llm_config)
+    if args.use_mock:
+        llm_config.use_mock = True
+    
     # Define the Task
     task = OverlapTask(num_circles=args.num_circles, overlaps_needed=overlaps_needed)
     
     if args.verbose:
         print(f"Task: {args.num_circles} circles with overlaps: {overlaps_needed}")
+        print(f"LLM Config: {llm_config.config.get('title', 'Unknown')}")
     
     # Get LLM Output
-    svg_response = mock_llm_generate(task.get_prompt())
+    svg_response = call_llm(task.get_prompt(), llm_config, verbose=args.verbose)
     
     # Evaluate
     evaluator = SVGEvaluator(svg_response)
